@@ -20,7 +20,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Show build version
         run: |
@@ -66,11 +66,29 @@ jobs:
           7z a -t7z -m0=lzma2 -mx=9 -mmt=on cpython-%PY_VER%-win64.7z .\output\*
         shell: cmd
 
+      - name: Compute SHA256 (PowerShell)
+        shell: pwsh
+        run: |
+          $file = "cpython-$env:PY_VER-win64.7z"
+          $hash = Get-FileHash -Algorithm SHA256 $file
+          Write-Host "Computed SHA256: $($hash.Hash)"
+          # write variable for later steps
+          echo "RELEASE_SHA256=$($hash.Hash)" | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
+          # write a .sha256 file alongside the archive
+          $out = "{0}  {1}" -f $hash.Hash, $file
+          $out | Out-File -FilePath "cpython-$env:PY_VER-win64.sha256" -Encoding ascii
+
       - name: Upload artifact (7z)
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: cpython-${{ env.PY_VER }}-win64
           path: cpython-${{ env.PY_VER }}-win64.7z
+
+      - name: Upload SHA256 artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: cpython-${{ env.PY_VER }}-win64-sha256
+          path: cpython-${{ env.PY_VER }}-win64.sha256
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -82,7 +100,9 @@ jobs:
 
             - Version: ${{ env.PY_VER }}
             - Platform: Windows x64
+            - Hash (SHA256): ${{ env.RELEASE_SHA256 }}
           files: |
             cpython-${{ env.PY_VER }}-win64.7z
+            cpython-${{ env.PY_VER }}-win64.sha256
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
