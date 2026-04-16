@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       python_version:
-        description: "CPython version to build (e.g. 3.12.10, 3.12.12)"
+        description: "CPython version to build (e.g. 3.12.12, 3.12.13)"
         required: true
-        default: "3.12.12"
+        default: "3.12.13"
 
 permissions:
   contents: write  # 创建 Release 需要
@@ -23,92 +23,98 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Show build version
+        shell: cmd
         run: |
           echo Building CPython %PY_VER% for Windows x64
-        shell: cmd
 
       - name: Download CPython source
+        shell: cmd
         run: |
           curl -L -o Python-%PY_VER%.tgz https://www.python.org/ftp/python/%PY_VER%/Python-%PY_VER%.tgz
-        shell: cmd
 
       - name: Extract source
+        shell: bash
         run: |
           tar -xvf Python-$PY_VER.tgz
-        shell: bash
 
       - name: List extracted content
+        shell: cmd
         run: |
           dir
           dir Python-%PY_VER%
-        shell: cmd
 
       - name: Prepare external deps
+        shell: cmd
         run: |
           cd Python-%PY_VER%\PCbuild
           call get_externals.bat
-        shell: cmd
-
-      # - name: Build CPython (Release x64)
-      #   run: |
-      #     cd Python-%PY_VER%\PCbuild
-      #     call build.bat -c Release -p x64
-      #   shell: cmd
 
       - name: Build CPython (Release x64)
+        shell: cmd
         run: |
           cd Python-%PY_VER%
-          call Tools\msi\buildrelease.bat -x64  --pgo -V
-        shell: cmd
+          call Tools\msi\buildrelease.bat -x64 --pgo -V
 
-      - name: Collect build outputs
+      - name: Prepare output directory
+        shell: cmd
         run: |
           mkdir output
-          copy Python-%PY_VER%\PCbuild\amd64\* output\
-        shell: cmd
 
-      - name: Pack to 7z (max compression)
-        run: |
-          7z a -t7z -m0=lzma2 -mx=9 -mmt=on cpython-%PY_VER%-win64.7z .\output\*
-        shell: cmd
+          echo Copying final release artifacts from en-us...
 
-      - name: Compute SHA256 (PowerShell)
+          copy Python-%PY_VER%\PCbuild\amd64\en-us\python-%PY_VER%-amd64.exe output\
+          copy Python-%PY_VER%\PCbuild\amd64\en-us\python-%PY_VER%-embed-amd64.zip output\
+
+      - name: Compute SHA256
         shell: pwsh
         run: |
-          $file = "cpython-$env:PY_VER-win64.7z"
-          $hash = Get-FileHash -Algorithm SHA256 $file
-          Write-Host "Computed SHA256: $($hash.Hash)"
-          # write variable for later steps
-          echo "RELEASE_SHA256=$($hash.Hash)" | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
-          # write a .sha256 file alongside the archive
-          $out = "{0}  {1}" -f $hash.Hash, $file
-          $out | Out-File -FilePath "cpython-$env:PY_VER-win64.sha256" -Encoding ascii
+          $exe = "output\python-$env:PY_VER-amd64.exe"
+          $zip = "output\python-$env:PY_VER-embed-amd64.zip"
 
-      - name: Upload artifact (7z)
+          $files = @($exe, $zip)
+          $hashList = @()
+
+          foreach ($f in $files) {
+            if (Test-Path $f) {
+              $h = Get-FileHash -Algorithm SHA256 $f
+              $hashList += "$($h.Hash)  $(Split-Path $f -Leaf)"
+              Write-Host "$f => $($h.Hash)"
+            } else {
+              Write-Host "WARNING: missing file $f"
+            }
+          }
+
+          $outFile = "output\SHA256SUMS.txt"
+          $hashList | Out-File -FilePath $outFile -Encoding ascii
+
+          # exe hash作为 release 主 hash
+          $exeHash = (Get-FileHash -Algorithm SHA256 $exe).Hash
+          echo "RELEASE_SHA256=$exeHash" | Out-File -FilePath $env:GITHUB_ENV -Encoding ascii -Append
+
+      - name: Upload artifact (optional)
         uses: actions/upload-artifact@v7
         with:
-          name: cpython-${{ env.PY_VER }}-win64
-          path: cpython-${{ env.PY_VER }}-win64.7z
+          name: cpython-${{ env.PY_VER }}-release
+          path: output/*
 
-      - name: Upload SHA256 artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: cpython-${{ env.PY_VER }}-win64-sha256
-          path: cpython-${{ env.PY_VER }}-win64.sha256
-
-      - name: Create GitHub Release
+      - name: Create GitHub Release + Upload Assets
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ env.PY_VER }}-win64
-          name: CPython ${{ env.PY_VER }} for Windows x64
+          name: CPython ${{ env.PY_VER }} Windows x64 Release
           body: |
-            CPython ${{ env.PY_VER }} for Windows x64, built on GitHub Actions.
+            CPython ${{ env.PY_VER }} Windows x64 Release build.
 
-            - Version: ${{ env.PY_VER }}
-            - Platform: Windows x64
-            - Hash (SHA256): ${{ env.RELEASE_SHA256 }}
+            SHA256 (exe):
+            ${{ env.RELEASE_SHA256 }}
+
+            Files:
+            - python-${{ env.PY_VER }}-amd64.exe
+            - python-${{ env.PY_VER }}-embed-amd64.zip
+            - SHA256SUMS.txt
           files: |
-            cpython-${{ env.PY_VER }}-win64.7z
-            cpython-${{ env.PY_VER }}-win64.sha256
+            output/python-${{ env.PY_VER }}-amd64.exe
+            output/python-${{ env.PY_VER }}-embed-amd64.zip
+            output/SHA256SUMS.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
