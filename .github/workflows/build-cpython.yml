@@ -49,10 +49,16 @@ jobs:
           call get_externals.bat
         shell: cmd
 
+      # - name: Build CPython (Release x64)
+      #   run: |
+      #     cd Python-%PY_VER%\PCbuild
+      #     call build.bat -c Release -p x64
+      #   shell: cmd
+
       - name: Build CPython (Release x64)
         run: |
-          cd Python-%PY_VER%\PCbuild
-          call build.bat -c Release -p x64
+          cd Python-%PY_VER%
+          call Tools\msi\buildrelease.bat -x64  --pgo -V
         shell: cmd
 
       - name: Collect build outputs
